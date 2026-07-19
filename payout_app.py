@@ -33,7 +33,7 @@ plt.rcParams.update({
 })
 
 MODULES = ["1 · Payoff Algebra", "2 · Smile ↔ Density", "3 · Spanning & the VIX",
-           "4 · The Inverse Problem"]
+           "4 · The Inverse Problem", "5 · Greeks"]
 try:
     _default = int(st.query_params.get("m", 0))
 except (TypeError, ValueError):
@@ -41,10 +41,11 @@ except (TypeError, ValueError):
 
 with st.sidebar:
     st.title("📐 Payout Lab")
-    module = st.radio("Module", MODULES, index=min(_default, 3))
+    module = st.radio("Module", MODULES, index=min(_default, len(MODULES) - 1))
     st.caption("A financial-engineering laboratory: every page pairs the derivation "
                "with a live visualization. Notation follows industry convention — "
-               "forward moneyness, total implied variance, risk-neutral measure $\\mathbb{Q}$.")
+               "forward moneyness, total implied variance, risk-neutral measure "
+               "$\\mathbb{Q}$ throughout.")
 
 
 def fig_axes(n=1, height=3.4):
@@ -120,7 +121,8 @@ def module_payoff_algebra():
     name = st.selectbox("Structure", list(presets), key="m1_structure")
 
     quiz("m1_quiz",
-         "If implied vol rises, the price of the **straddle**…",
+         "If implied vol rises, the price of the **straddle**… "
+         "(pick the straddle above and sweep the vol slider to check)",
          ["rises", "falls", "stays the same"], 0,
          "Rises — both legs are long convexity, so fatter tails raise the value of the call "
          "and the put together: long options are long vol. Check it: pick the straddle, sweep "
@@ -197,10 +199,13 @@ def module_payoff_algebra():
 
     fig, (ax,) = fig_axes(height=3.8)
     leg_cols = [GREEN, YELLOW, MAGENTA, RED]
-    for j, lg in enumerate(vis):
-        ax.plot(S, payout_of(S, [lg]), color=leg_cols[j % 4], ls="--", lw=1.1,
-                alpha=0.9, label=leg_desc(*lg))
-    ax.plot(S, total, color=INK, lw=2.4, label="sum: payout at $T$")
+    if nshow > 1:                       # a lone leg IS the sum — don't hide it under itself
+        for j, lg in enumerate(vis):
+            ax.plot(S, payout_of(S, [lg]), color=leg_cols[j % 4], ls="--", lw=1.1,
+                    alpha=0.9, label=leg_desc(*lg))
+    sum_label = ("sum: payout at $T$" if nshow > 1
+                 else f"{leg_desc(*vis[0])} — payout at $T$")
+    ax.plot(S, total, color=INK, lw=2.4, label=sum_label)
     if show_pnl:
         ax.plot(S, pnl, color=BLUE, ls="--", label=f"P&L (premium {premium:+.2f} at $t$)")
         ax.axhline(0, color=MUT, lw=1)
@@ -336,7 +341,7 @@ def module_smile_density():
     # -- presets seed the sliders; a guard lets manual slider moves survive reruns
     PRESETS = {
         "flat (Black–Scholes)":      dict(a=0.020, b=0.01, rho=0.00,  m=0.00, sg=0.25),
-        "equity-index skew":         dict(a=0.012, b=0.10, rho=-0.35, m=0.02, sg=0.25),
+        "equity-index skew":         dict(a=0.001, b=0.04, rho=-0.35, m=0.02, sg=0.25),
         "symmetric smile (FX-like)": dict(a=0.010, b=0.25, rho=0.00,  m=0.00, sg=0.15),
         "steep crash fear":          dict(a=0.012, b=0.30, rho=-0.80, m=0.00, sg=0.25),
     }
@@ -348,7 +353,7 @@ def module_smile_density():
             st.session_state["m2_" + pk] = v
 
     quiz("m2_quiz_rho",
-         "Drag ρ from −0.35 up to +0.35. Which **far** tail of the density gets fatter?",
+         "Make ρ positive (drag it above 0). Which **far** tail of the density gets fatter?",
          ["the left tail", "the right tail", "both equally"], 1,
          "ρ tilts the smile: the wings grow with slopes $b(1-\\rho)$ (left) and "
          "$b(1+\\rho)$ (right), so positive ρ loads variance onto high strikes and "
@@ -418,8 +423,9 @@ def module_smile_density():
     ax.fill_between(Kq, qp, 0, where=lmask, color=MAGENTA, alpha=0.35, lw=0)
     ax.annotate(f"← same information\n$P(S_T<{Kthr:.0f})$ = {tail:.1%}",
                 xy=(0.80 * F, float(np.interp(0.80 * F, Kq, qp))),
-                xytext=(0.03, 0.72), textcoords="axes fraction", fontsize=8,
-                color=MAGENTA, arrowprops=dict(arrowstyle="->", color=MAGENTA, lw=1.2))
+                xytext=(0.02, 0.85), textcoords="axes fraction", fontsize=8, color=MAGENTA,
+                bbox=dict(boxstyle="round,pad=0.2", fc="#fcfcfb", ec="none", alpha=0.85),
+                arrowprops=dict(arrowstyle="->", color=MAGENTA, lw=1.2))
     im = int(np.argmax(q))
     ax.annotate(f"mode ≈ {Kq[im]:.0f}", xy=(Kq[im], q[im]), xytext=(10, -2),
                 textcoords="offset points", fontsize=8, color=MUT)
@@ -435,17 +441,18 @@ def module_smile_density():
 
     narrate(f"At k=−0.15 (strike {F * np.exp(-0.15):.0f}, ≈86% of the forward) this smile "
             f"quotes {iv15:.1%} vs {atm:.1%} ATM ({(iv15 - atm) * 100:+.1f} vol points); "
-            f"that shape gives the shaded tail $S_T<{Kthr:.0f}$ a {tail:.1%} risk-neutral "
+            f"that shape gives the shaded tail S_T < {Kthr:.0f} a {tail:.1%} risk-neutral "
             f"probability vs {flat_tail(0.85):.1%} under a flat Black–Scholes smile at the "
-            f"same ATM vol — and the deep tail $S_T<{Kdeep:.0f}$ holds {deep:.1%} "
+            f"same ATM vol — and the deep tail S_T < {Kdeep:.0f} holds {deep:.1%} "
             f"vs {flat_tail(0.70):.1%} flat.")
 
     mass = float(np.trapezoid(qp, Kq))
     negmass = max(0.0, float(-np.trapezoid(np.minimum(q, 0), Kq)))
     lee = b_ * (1 + abs(rho))
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("∫q dK", f"{mass:.3f}",
-              help="should be ≈ 1 (some mass lives outside the strike range)")
+    c1.metric("∫q⁺ dK (positive mass)", f"{mass:.3f}",
+              help="≈ 1 when arb-free (some mass lives outside the strike range); "
+                   "exceeds 1 exactly when arbitrage creates negative density elsewhere")
     c2.metric("negative mass", f"{negmass:.4f}",
               delta="arbitrage!" if negmass > 1e-4 else "arb-free", delta_color="inverse")
     c3.metric("Lee wing bound b(1+|ρ|)", f"{lee:.2f} / 2.00",
@@ -473,7 +480,8 @@ def module_smile_density():
     loc = (qp[1:-1] > qp[:-2]) & (qp[1:-1] >= qp[2:]) & (qp[1:-1] > 0.05 * max(float(qp.max()), 1e-12))
     n_modes = int(loc.sum())
     if n_modes <= 1:
-        mode_msg = "Your current density has **one hump** — and it always will."
+        mode_msg = ("Your current density has **one hump** — and SVI will fight hard "
+                    "to keep it that way.")
     elif negmass > 1e-4:
         mode_msg = (f"You count **{n_modes} local peaks**, but negative mass reads "
                     f"{negmass:.4f}: the extra hump was bought with butterfly "
@@ -498,8 +506,9 @@ def module_smile_density():
             "call prices across strikes are a photograph of the probability density — "
             "taken in volatility coordinates. Lift the smile's left wing and you have "
             "made crash protection dearer: that *is* moving probability into the deep "
-            "left tail. One object, two coordinate systems; every slider bends both "
-            "panels at once.")
+            "left tail — though the *near*-the-money left tail can thin as mass migrates "
+            "deeper, which is why the narration quotes both a moderate and a deep tail. "
+            "One object, two coordinate systems; every slider bends both panels at once.")
     with tab_f:
         st.latex(r"w(k) \;=\; a + b\left(\rho\,(k-m) + \sqrt{(k-m)^2+\sigma^2}\right),"
                  r"\qquad k=\ln(K/F),\quad w=\sigma_{\mathrm{imp}}^2\,T")
@@ -607,9 +616,12 @@ def module_spanning():
         ax.plot(S, partial, color=BLUE, ls="--", label=labels[stage])
         ax.fill_between(S, partial, gS, color=MAGENTA, alpha=0.15)
     arrow = dict(arrowstyle="->", color=MUT, lw=1.2)
+    at_edge = (not flat_curv) and int(np.argmax(core)) == 0
     if stage == 0:
         txt = ("constant curvature — every strike\nwill get the same weight" if flat_curv
-               else f"bends hardest near S≈{Sc:.0f} —\noptions must buy this")
+               else ("curvature $1/S^2$ keeps growing as $S$ falls —\nthe left wing "
+                     "is where options are needed" if at_edge
+                     else f"bends hardest near S≈{Sc:.0f} —\noptions must buy this"))
         ax.annotate(txt, xy=(Sc, g(Sc)), xytext=(25, 30),
                     textcoords="offset points", fontsize=8, color=MUT, arrowprops=arrow)
     elif stage == 1:
@@ -655,6 +667,11 @@ def module_spanning():
             narrate(f"This parabola bends at the constant rate g''=2/F²≈{2/F**2:.6f} "
                     f"everywhere, so each of the {N} strikes will carry the same weight "
                     f"≈{2/F**2*dK:.5f} — bonds and shares contribute zero curvature.")
+        elif at_edge:
+            narrate(f"This target's curvature is monotone — |g''| = 1/S² keeps growing as "
+                    f"S falls (already {core.max():.4f} by S≈{Sc:.0f}); a bond has no slope "
+                    "and a share has no bend, so the low-strike wing is where options must "
+                    "buy the curvature.")
         else:
             narrate(f"This target bends hardest near S≈{Sc:.0f} (|g''|≈{core.max():.4f}); "
                     "a bond has no slope and a share has no bend, so every bit of that "
@@ -679,11 +696,15 @@ def module_spanning():
                 f"to {err2:.4f} — ×{err/err2:.1f}, the quadratic convergence of a "
                 "piecewise-linear fit.")
 
+    # metrics appear as their objects enter the construction — no spoilers
     m1, m2, m3 = st.columns(3)
-    m1.metric("max strip error inside strikes", f"{err:.4f}",
-              help="quarters (≈×4) when ΔK halves — piecewise-linear, O(ΔK²)")
-    m2.metric("bond legs (level g(κ))", f"{bonds:+.3f}")
-    m3.metric("stock legs (slope g'(κ))", f"{s0:+.4f}")
+    if stage >= 1:
+        m1.metric("bond legs (level g(κ))", f"{bonds:+.3f}")
+    if stage >= 2:
+        m2.metric("stock legs (slope g'(κ))", f"{s0:+.4f}")
+    if stage >= 3:
+        m3.metric("max strip error inside strikes", f"{err:.4f}",
+                  help="quarters (≈×4) when ΔK halves — piecewise-linear, O(ΔK²)")
 
     # -- experiment (a): where coarse grids fail, computed for the Gaussian bump
     gb = targets["Gaussian bump (bet on a range)"]
@@ -703,7 +724,7 @@ def module_spanning():
     #    Strip price = Z·g(κ) + g'(κ)(S0 − κZ) + Σ w_i C(K_i);  E_Q[−ln(S_T/F)] = price/Z,
     #    and a VIX-style vol is sqrt(2/T · E_Q[−ln(S_T/F)]). Under flat BS vol σ,
     #    E[−ln(S_T/F)] = σ²T/2 exactly, so the flat strip must recover ATM vol.
-    a2, b2, r2, m2_, sg2 = 0.012, 0.10, -0.35, 0.02, 0.25   # module-2 SVI defaults
+    a2, b2, r2, m2_, sg2 = 0.001, 0.04, -0.35, 0.02, 0.25   # module-2 equity-skew preset
     def svi_iv(Karr):
         k = np.log(np.asarray(Karr, float) / F)
         return np.sqrt((a2 + b2 * (r2 * (k - m2_) + np.sqrt((k - m2_) ** 2 + sg2**2))) / T)
@@ -716,12 +737,13 @@ def module_spanning():
     vol_flat = float(np.sqrt(2 / T * (lin_px + c_flat) / Z))
     experiment(
         "m3_exp2", "why the VIX sits above ATM vol",
-        "Select the **log contract** at ΔK=2.5 — the strip below is (2/T ×) the VIX "
-        "portfolio. Prediction: does its price change if every call is re-priced on "
+        "Select the **log contract** at ΔK=2.5 — the strip below, scaled by 2/T, is the "
+        "VIX portfolio. Prediction: does its price change if every call is re-priced on "
         "module 2's *skewed* SVI smile instead of one flat ATM vol?",
         f"Priced on a single flat vol equal to ATM ({iv_atm:.1%}), the strip implies a "
-        f"VIX-style vol of {vol_flat:.1%} — it recovers ATM, as Black–Scholes demands "
-        "($\\mathbf{E}[-\\ln(S_T/F)]=\\sigma^2 T/2$). Re-pricing the *same weights* on "
+        f"VIX-style vol of {vol_flat:.1%} — ATM recovered to within discretization "
+        "($\\mathbf{E}[-\\ln(S_T/F)]=\\sigma^2 T/2$ under flat Black–Scholes). "
+        "Re-pricing the *same weights* on "
         f"module 2's default skew costs {c_svi:.4f} vs {c_flat:.4f} per contract "
         f"(+{c_svi - c_flat:.4f}) and implies {vol_svi:.1%} — "
         f"{(vol_svi - vol_flat) * 100:.1f} vol points above ATM. The $1/K^2$ weights "
@@ -786,7 +808,7 @@ def module_inverse():
     ticker = c[0].text_input("Ticker", "SOXX", key="m4_ticker")
     dte = c[1].slider("Days to expiry", 14, 180, 45, key="m4_dte")
     fraction = c[2].slider("Kelly fraction f", 0.0, 1.0, 0.5, 0.05, key="m4_f",
-                           help="p_f ∝ p^f q^(1−f); since (p_f/q)=(p/q)^f this *is* fractional Kelly")
+                           help="p_f ∝ p^f q^(1−f); since (p_f/q) ∝ (p/q)^f this *is* fractional Kelly (up to the normalizing constant)")
     wealth = c[3].number_input("Budget ($)", 1_000, 1_000_000, 10_000, step=1_000, key="m4_wealth")
 
     @st.cache_data(ttl=300, show_spinner="Fetching chain…")
@@ -869,8 +891,10 @@ def module_inverse():
         ax.axhline(wealth, color=MUT, lw=1, ls=":")
         cross = np.where(np.diff(np.sign(g - wealth)) != 0)[0]
         if len(cross):
-            i = int(cross[-1])
-            ax.annotate(f"breakeven: $g^*=W$\nat $S_T \\approx {grid[i]:.0f}$", xy=(grid[i], wealth),
+            i = int(cross[-1])                # a wavy g* can cross W several times
+            ax.annotate(f"last breakeven: $g^*=W$\nat $S_T \\approx {grid[i]:.0f}$ "
+                        f"({len(cross)} crossing{'s' if len(cross) > 1 else ''} in all)",
+                        xy=(grid[i], wealth),
                         xytext=(0.05, 0.75), textcoords="axes fraction", fontsize=8,
                         color=INK, arrowprops=dict(arrowstyle="->", color=MUT))
         ax.set_xlabel("$S_T$"); ax.set_title("The payoff that monetizes it"); ax.legend(fontsize=9)
@@ -889,27 +913,35 @@ def module_inverse():
         draw_densities(axes[0]); draw_payoff(axes[1], with_repl=True)
     st.pyplot(fig)
 
-    # narration: top decile of q, your probability of it, average ticket payout there
+    # narration: top decile of q, your probability of it, average payout there.
+    # Before the "make it tradable" stage, speak in terms of the ideal g*, not the ticket.
     x90 = float(np.interp(0.9, q.cdf, grid))
     mask = grid >= x90
     q_tail = float(np.trapezoid(q.pdf[mask], grid[mask]))
     p_tail = float(np.trapezoid(p_view[mask], grid[mask]))
-    h_grid = ticket.payoff(grid)
-    avg_pay = float(np.trapezoid(p_view[mask] * h_grid[mask], grid[mask])) / max(p_tail, 1e-12)
+    pay_curve = ticket.payoff(grid) if stage == 3 else g
+    pay_name = "the ticket" if stage == 3 else "the ideal payoff $g^*$"
+    avg_pay = float(np.trapezoid(p_view[mask] * pay_curve[mask], grid[mask])) / max(p_tail, 1e-12)
     p_loss = float(summary["P(lose money) under your view"])
     narrate(f"You price a finish above \\${x90:,.0f} — the market's top decile ({q_tail:.0%} under q) — "
-            f"at {p_tail:.0%}, i.e. {p_tail / max(q_tail, 1e-12):.1f}× the market; the ticket pays "
+            f"at {p_tail:.0%}, i.e. {p_tail / max(q_tail, 1e-12):.1f}× the market; {pay_name} pays "
             f"\\${avg_pay:,.0f} on average up there ({avg_pay / wealth:.2f}× budget), and the price of "
             f"that tilt is a {p_loss:.0%} chance of losing money under your own view.")
 
+    # metrics appear as their objects enter the construction — no spoilers
     m = st.columns(4)
     m[0].metric("KL(p‖q)", f"{kl:.4f} nats", help="your edge over the option's life")
-    m[1].metric("annualized log growth (replicated)",
-                f"{summary['annualized (replicated)']:.1%}",
-                help="includes the risk-free carry: at f=0 this is just r, while the KL edge is 0")
-    m[2].metric("P(lose) under your view", f"{p_loss:.0%}",
-                help="log-optimal payoffs lose often, win big — by design")
-    m[3].metric("ticket cost", f"${ticket.cost:,.0f}")
+    if stage >= 2:
+        m[1].metric("P(lose) under your view", f"{p_loss:.0%}",
+                    help="log-optimal payoffs lose often, win big — by design; the "
+                         "simulator below shows its own 20k-path estimate, which differs "
+                         "only by sampling noise")
+    if stage >= 3:
+        m[2].metric("annualized log growth (replicated)",
+                    f"{summary['annualized (replicated)']:.1%}",
+                    help="includes the risk-free carry: at f=0 this is just r, while the KL edge is 0")
+        m[3].metric("ticket cost", f"${ticket.cost:,.0f}",
+                    help="below budget: listed strikes truncate the ideal payoff's tails")
 
     if stage == 3:
         with st.expander("Order ticket (educational — mid fills, no fees; not investment advice)"):
@@ -919,28 +951,32 @@ def module_inverse():
             st.dataframe(legs[["type", "strike", "side", "qty", "mid", "cost"]].round(2),
                          hide_index=True)
 
-    # ---------------------------------------------------------- outcome simulator
-    wT = simulate(ticker, dte, fraction, wealth)
-    med = float(np.median(wT))
-    ploss_sim = float(np.mean(wT < ticket.cost))
-    lo = max(float(wT.min()) * 0.95, 1.0)
-    hi = max(float(wT.max()) * 1.05, lo * 1.01)
-    bins = np.geomspace(lo, hi, 60)
-    fig2, (ax2,) = fig_axes(1, height=2.9)
-    ax2.hist(wT[wT < ticket.cost], bins=bins, color=MAGENTA, alpha=0.85,
-             label=f"below cost ${ticket.cost:,.0f} — P(loss) {ploss_sim:.0%}")
-    ax2.hist(wT[wT >= ticket.cost], bins=bins, color=GREEN, alpha=0.85, label="above cost")
-    ax2.set_xscale("log")
-    ax2.minorticks_off()                 # minor tick labels collide at the left edge
-    ax2.axvline(med, color=INK, lw=1.5)
-    ax2.annotate(f"median ${med:,.0f}", xy=(med, ax2.get_ylim()[1] * 0.80),
-                 xytext=(0.74, 0.55), textcoords="axes fraction", fontsize=8, color=INK,
-                 bbox=dict(boxstyle="round,pad=0.2", fc="#fcfcfb", ec="none", alpha=0.9),
-                 arrowprops=dict(arrowstyle="->", color=MUT))
-    ax2.set_xlabel("terminal wealth of the ticket ($, log scale)")
-    ax2.set_title("Outcome simulator — 20,000 expiries drawn from your $p_f$")
-    ax2.legend(fontsize=9, loc="upper left")
-    st.pyplot(fig2)
+    # ------ outcome simulator: only once the TICKET exists (stage 4, "make it tradable")
+    if stage == 3:
+        wT = simulate(ticker, dte, fraction, wealth)
+        med = float(np.median(wT))
+        ploss_sim = float(np.mean(wT < ticket.cost))
+        lo = max(float(wT.min()) * 0.95, 1.0)
+        hi = max(float(wT.max()) * 1.05, lo * 1.01)
+        bins = np.geomspace(lo, hi, 60)
+        fig2, (ax2,) = fig_axes(1, height=2.9)
+        ax2.hist(wT[wT < ticket.cost], bins=bins, color=MAGENTA, alpha=0.85,
+                 label=f"below cost ${ticket.cost:,.0f} — P(loss) {ploss_sim:.0%}")
+        ax2.hist(wT[wT >= ticket.cost], bins=bins, color=GREEN, alpha=0.85, label="above cost")
+        ax2.set_xscale("log")
+        ax2.minorticks_off()             # minor tick labels collide at the left edge
+        ax2.axvline(med, color=INK, lw=1.5)
+        ax2.annotate(f"median ${med:,.0f}", xy=(med, ax2.get_ylim()[1] * 0.80),
+                     xytext=(0.74, 0.55), textcoords="axes fraction", fontsize=8, color=INK,
+                     bbox=dict(boxstyle="round,pad=0.2", fc="#fcfcfb", ec="none", alpha=0.9),
+                     arrowprops=dict(arrowstyle="->", color=MUT))
+        ax2.set_xlabel("terminal wealth of the ticket ($, log scale)")
+        ax2.set_title("Outcome simulator — 20,000 expiries drawn from your $p_f$")
+        ax2.legend(fontsize=9, loc="upper left")
+        st.pyplot(fig2)
+        st.caption(f"The replicated ticket costs \\${ticket.cost:,.0f} of the "
+                   f"\\${wealth:,.0f} budget — listed strikes truncate the ideal payoff's "
+                   "tails, so losses here are measured against the cost actually paid.")
 
     # ------------------------------------------------------------- experiments
     # Reveals are computed lazily: a toggle's session_state key is already True on
@@ -957,7 +993,7 @@ def module_inverse():
         reveal_f = (f"Computed live — f=1.00: P(loss) {pl1:.0%}, median ${md1:,.0f}, 5th–95th pct "
                     f"${lo1:,.0f}–${hi1:,.0f}.  f=0.25: P(loss) {pl2:.0%}, median ${md2:,.0f}, "
                     f"${lo2:,.0f}–${hi2:,.0f}. The fraction mostly rescales *magnitudes*, not "
-                    "frequency: since $(p_f/q)=(p/q)^f$, quarter-Kelly places the same bets at a "
+                    "frequency: since $(p_f/q)\\propto(p/q)^f$, quarter-Kelly places the same bets at a "
                     "quarter of the log-strength, compressing both tails toward the bond. Full Kelly "
                     "maximizes expected log growth but only if $p$ is exactly right.")
     else:
@@ -1011,7 +1047,7 @@ def module_inverse():
     with tab_d:
         st.markdown(
             "Fractional Kelly is geometric-view blending: $p_f\\propto p^f q^{1-f}$, so "
-            "$(p_f/q)=(p/q)^f$ — the payoff is the full-Kelly payoff tilted to the $f$-th power, "
+            "$(p_f/q)\\propto(p/q)^f$ — the payoff is the full-Kelly payoff tilted to the $f$-th power (up to the normalizing constant of $p_f$), "
             "the classic 'bet a fraction $f$ of the Kelly bet' done in density space.\n\n"
             "Two honest caveats. **P vs Q**: part of any measured gap between $p$ and $q$ is risk "
             "premium, not edge — $q$ is reweighted by marginal utility, so crash states look "
@@ -1022,5 +1058,207 @@ def module_inverse():
             "mis-specified $p$ is how accounts die; $f<1$ is the apology.")
 
 
+# ======================================================================= 5
+def module_greeks():
+    from scipy.stats import norm
+    from matplotlib.colors import LinearSegmentedColormap
+
+    st.header("Greeks: the derivatives of the price surface")
+    learn("read Δ as the tangent slope of C(S) — the shares a hedger holds against you",
+          "see Γ as the curvature that decays every hedge — and recognize it as "
+          "module 2's density bell in different clothes",
+          "read Θ as the rent paid for Γ, with the Black–Scholes identity balancing the two")
+
+    quiz("m5_quiz",
+         "As expiry approaches, an **at-the-money** call's gamma…",
+         ["shrinks toward 0", "explodes", "stays constant"], 1,
+         "Explodes — $\\Gamma_{ATM} \\approx \\varphi(d_1)/(S\\sigma\\sqrt{T})$, and the "
+         "$\\sqrt{T}$ in the denominator sends it to infinity as the payoff's kink forms. "
+         "Check it below: drag *days to expiry* toward 1 and watch both the right panel "
+         "and the heatmap's flame at the strike.")
+
+    K = 100.0
+    r = 0.04
+    c1, c2, c3 = st.columns(3)
+    Sspot = c1.slider("Spot S", 60.0, 140.0, 105.0, 1.0, key="m5_S")
+    vol = c2.slider("Implied vol", 0.10, 0.90, 0.30, 0.05, key="m5_vol")
+    days = c3.slider("Days to expiry", 1, 365, 90, key="m5_days")
+    T = days / 365.0
+
+    def d1d2(S, t=T, v=vol):
+        S = np.asarray(S, float)
+        d1 = (np.log(S / K) + (r + v**2 / 2) * t) / (v * np.sqrt(t))
+        return d1, d1 - v * np.sqrt(t)
+
+    def call(S, t=T, v=vol):
+        d1, d2 = d1d2(S, t, v)
+        return np.asarray(S) * norm.cdf(d1) - K * np.exp(-r * t) * norm.cdf(d2)
+
+    def delta(S, t=T, v=vol):
+        return norm.cdf(d1d2(S, t, v)[0])
+
+    def gamma(S, t=T, v=vol):
+        return norm.pdf(d1d2(S, t, v)[0]) / (np.asarray(S) * v * np.sqrt(t))
+
+    def theta_day(S, t=T, v=vol):          # per calendar day
+        d1, d2 = d1d2(S, t, v)
+        yearly = (-np.asarray(S) * norm.pdf(d1) * v / (2 * np.sqrt(t))
+                  - r * K * np.exp(-r * t) * norm.cdf(d2))
+        return yearly / 365.0
+
+    stage = stepper("m5_stage", ["1 · price & Δ (slope)", "2 · + Γ (curvature)",
+                                 "3 · + Θ (the rent)"], )
+
+    S = np.linspace(60, 140, 801)
+    C = call(S)
+    D0, G0, Th0 = float(delta(Sspot)), float(gamma(Sspot)), float(theta_day(Sspot))
+    C0 = float(call(Sspot))
+
+    fig, axes = fig_axes(2)
+    ax = axes[0]
+    ax.plot(S, C, color=INK, label=f"call price $C(S)$, {days}d to expiry")
+    ax.plot(S, np.maximum(S - K, 0), color=MUT, ls=":", lw=1.2, label="payoff at expiry")
+    tang = C0 + D0 * (S - Sspot)
+    ax.plot(S, tang, color=BLUE, ls="--", lw=1.4, label=f"tangent: slope Δ = {D0:.2f}")
+    ax.plot([Sspot], [C0], marker="o", ms=6, color=BLUE)
+    ax.annotate(f"here: C = {C0:.2f}\nΔ = {D0:.2f}, a hedger\nshorts {D0:.2f} shares",
+                xy=(Sspot, C0), xytext=(-95, 30), textcoords="offset points", fontsize=8,
+                color="#52514e",
+                bbox=dict(boxstyle="round,pad=0.25", fc="#fcfcfb", ec="none", alpha=0.9),
+                arrowprops=dict(arrowstyle="->", color=MUT, lw=1))
+    ax.set_xlabel("$S$"); ax.set_ylabel("value")
+    ax.set_title("The price curve and its tangent")
+    ax.legend(fontsize=8, loc="upper left")
+
+    ax = axes[1]
+    if stage == 0:
+        ax.plot(S, delta(S), color=BLUE)
+        ax.plot([Sspot], [D0], marker="o", ms=6, color=BLUE)
+        ax.set_ylabel("Δ")
+        ax.set_title("Δ(S) — the slope, read across spots")
+        ax.annotate("ramps 0 → 1 across the strike;\nsteepness is Γ, next stage",
+                    xy=(K, float(delta(K))), xytext=(12, -34), textcoords="offset points",
+                    fontsize=8, color=MUT,
+                    arrowprops=dict(arrowstyle="->", color=MUT, lw=1))
+    elif stage == 1:
+        ax.plot(S, gamma(S), color=GREEN)
+        ax.plot([Sspot], [G0], marker="o", ms=6, color=GREEN)
+        ax.set_ylabel("Γ")
+        ax.set_title("Γ(S) — the curvature")
+        ax.annotate("a bell centered near the strike —\nmodule 2's butterfly density,\n"
+                    "photographed in $S$ instead of $K$",
+                    xy=(K, float(gamma(K))), xytext=(-120, -40), textcoords="offset points",
+                    fontsize=8, color="#52514e",
+                    bbox=dict(boxstyle="round,pad=0.25", fc="#fcfcfb", ec="none", alpha=0.9),
+                    arrowprops=dict(arrowstyle="->", color=MUT, lw=1))
+    else:
+        ax.plot(S, theta_day(S), color=MAGENTA)
+        ax.plot([Sspot], [Th0], marker="o", ms=6, color=MAGENTA)
+        ax.axhline(0, color=MUT, lw=1)
+        ax.set_ylabel("Θ ($/day)")
+        ax.set_title("Θ(S) — the rent, most negative at the strike")
+        ax.annotate("deepest exactly where Γ peaks:\nthe rent is *for* the convexity",
+                    xy=(K, float(theta_day(K))), xytext=(-115, -34),
+                    textcoords="offset points", fontsize=8, color="#52514e",
+                    bbox=dict(boxstyle="round,pad=0.25", fc="#fcfcfb", ec="none", alpha=0.9),
+                    arrowprops=dict(arrowstyle="->", color=MUT, lw=1))
+    ax.set_xlabel("$S$")
+    st.pyplot(fig)
+
+    move = 5.0
+    hedge_gap = 0.5 * G0 * move**2
+    carry = 0.5 * vol**2 * Sspot**2 * G0 / 365.0
+    if stage == 0:
+        narrate(f"At S = {Sspot:g} with {days} days left, the {K:g}-call is worth "
+                f"\\${C0:.2f} and Δ = {D0:.2f}: a \\$1 rally adds ≈{D0:.2f} to the call, "
+                f"so a delta-hedger holds {D0:.2f} short shares against it — and is flat, "
+                "until the slope itself moves.")
+    elif stage == 1:
+        narrate(f"Γ = {G0:.4f}: a \\$1 rally lifts Δ from {D0:.2f} to "
+                f"≈{float(delta(Sspot + 1)):.2f}, and after a ±\\${move:.0f} move the "
+                f"tangent misprices the call by ≈½Γ·{move:.0f}² = \\${hedge_gap:.2f} — "
+                "always in the option owner's favor; that free convexity is what Θ charges for.")
+    else:
+        narrate(f"Θ = −\\${abs(Th0):.3f}/day of rent vs ½σ²S²Γ ≈ \\${carry:.3f}/day of "
+                f"expected convexity gain if the stock moves at {vol:.0%} vol — the "
+                "Black–Scholes identity nets these (with the carry terms) to the "
+                "risk-free rate: a hedged option earns exactly its rent, no more.")
+
+    if stage >= 1:
+        Sg = np.linspace(70, 130, 121)
+        dg = np.arange(1, 121)
+        GG = np.array([gamma(Sg, t=d / 365.0) for d in dg])
+        cmap = LinearSegmentedColormap.from_list("blues", ["#fcfcfb", "#cde2fb",
+                                                           "#2a78d6", "#0d366b"])
+        figh, (axh,) = fig_axes(1, height=3.0)
+        im = axh.pcolormesh(Sg, dg, GG, cmap=cmap, shading="auto")
+        axh.axvline(K, color="#fcfcfb", lw=1, ls="--")
+        axh.annotate("pin risk: Γ flames up\nat the strike into expiry",
+                     xy=(K, 4), xytext=(0.60, 0.28), textcoords="axes fraction",
+                     fontsize=8, color=INK,
+                     bbox=dict(boxstyle="round,pad=0.25", fc="#fcfcfb", ec="none", alpha=0.9),
+                     arrowprops=dict(arrowstyle="->", color=INK, lw=1))
+        axh.set_xlabel("$S$"); axh.set_ylabel("days to expiry")
+        axh.set_title("Γ(S, t) — where hedges burn")
+        figh.colorbar(im, ax=axh, label="Γ")
+        st.pyplot(figh)
+
+    g_now = float(gamma(K, t=T))
+    g_2d = float(gamma(K, t=2 / 365.0))
+    experiment(
+        "m5_exp_expiry", "watch gamma explode into expiry",
+        "Park spot at 100 (the strike) and drag **days to expiry** from 90 down to 2. "
+        "Watch the Γ panel's y-axis and the heatmap flame.",
+        f"Computed live: ATM Γ is {g_now:.4f} at {days} days and {g_2d:.4f} at 2 days — "
+        f"×{g_2d / max(g_now, 1e-12):.0f}. Since $\\Gamma_{{ATM}} \\approx "
+        f"\\varphi(d_1)/(S\\sigma\\sqrt{{T}})$, halving time-to-expiry multiplies ATM Γ "
+        "by √2, without bound. Desks call the endgame *pin risk*: near the strike at "
+        "expiry, Δ snaps between 0 and 1 on tiny moves and the hedge churns violently.")
+    g_v1 = float(gamma(Sspot, v=vol))
+    g_v2 = float(gamma(Sspot, v=min(vol * 2, 0.9)))
+    experiment(
+        "m5_exp_vol", "vol dampens gamma",
+        f"Note Γ at your current vol ({vol:.0%}), then double the vol slider. "
+        "Predict first: does Γ rise or fall?",
+        f"Falls (at the money): Γ = {g_v1:.4f} at {vol:.0%} vs {g_v2:.4f} at "
+        f"{min(vol * 2, 0.9):.0%} — the $1/\\sigma\\sqrt{{T}}$ in "
+        "$\\varphi(d_1)/(S\\sigma\\sqrt{T})$ spreads the same total curvature over a "
+        "wider range of spots. High-vol names have flatter, wider Γ profiles — same "
+        "bell-vs-width tradeoff as the densities in module 2.")
+
+    tab_i, tab_f, tab_d = st.tabs(["Intuition", "The formula", "Deeper"])
+    with tab_i:
+        st.markdown(
+            "Δ is the slope, Γ the bend, Θ the rent. A delta-hedged option position is "
+            "a bet on *movement against rent*: every wiggle earns ½Γ·(ΔS)² for the "
+            "owner, every day costs Θ. If realized volatility beats the implied vol you "
+            "paid, the wiggles out-earn the rent — that is the whole vol-trading "
+            "business in one sentence.")
+    with tab_f:
+        st.latex(r"\Delta = N(d_1)\qquad \Gamma = \frac{\varphi(d_1)}{S\sigma\sqrt{T}}"
+                 r"\qquad \nu = S\varphi(d_1)\sqrt{T}\qquad"
+                 r"\Theta = -\frac{S\varphi(d_1)\sigma}{2\sqrt{T}} - rKe^{-rT}N(d_2)")
+        st.markdown(
+            "Δ: shares equivalent. Γ: Δ's own sensitivity. ν (vega): dollars per vol "
+            "point. Θ: dollars per year (the app shows per day). They are not "
+            "independent — the Black–Scholes equation ties them:")
+        st.latex(r"\Theta + rS\Delta + \tfrac{1}{2}\sigma^2 S^2 \Gamma = rC")
+        st.markdown("A hedged book's Θ bleed and Γ earnings net to the risk-free rate — "
+                    "by construction, not coincidence.")
+    with tab_d:
+        st.markdown(
+            "**Γ is module 2's density.** Black–Scholes prices are homogeneous — "
+            "$C(\\lambda S, \\lambda K) = \\lambda C(S,K)$ — which forces "
+            "$S^2\\,\\partial^2C/\\partial S^2 = K^2\\,\\partial^2C/\\partial K^2$ at "
+            "flat vol: the curvature you see in $S$ (gamma) and the curvature module 2 "
+            "differences in $K$ (the butterfly density) are the same object. That is "
+            "why a dealer's *aggregate* gamma map doubles as a map of where the market "
+            "has bought its probability mass — and why heavy open interest at a strike "
+            "can pin the stock there at expiry: hedgers with long gamma fade every move "
+            "away from the strike. Daily breakeven for a hedged long option: the stock "
+            "must move about $\\sigma S \\sqrt{1/252}$ — one implied daily standard "
+            "deviation — for Γ earnings to cover Θ.")
+
+
 [module_payoff_algebra, module_smile_density,
- module_spanning, module_inverse][MODULES.index(module)]()
+ module_spanning, module_inverse, module_greeks][MODULES.index(module)]()

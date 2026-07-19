@@ -9,7 +9,7 @@ theory — the deliverable is understanding, benchmarked against quant industry 
 The engine is `payout_lab/`; the UI is `payout_app.py` (Streamlit,
 `streamlit run payout_app.py`); the long-form treatments live in the two notebooks
 (*Option Price and Probability Duality*, *Inverse Problem — Log-Optimal Semiconductor
-Payouts*). Modules deep-link via `?m=0..3`.
+Payouts*). Modules deep-link via `?m=0..4`.
 
 ## Design principles
 
@@ -29,20 +29,20 @@ Payouts*). Modules deep-link via `?m=0..3`.
    every module fully interactive offline; `MASSIVE_API_KEY` swaps in live Massive
    (ex-Polygon.io) data with no code change.
 
-## The four modules (implemented)
+## The five modules (implemented)
 
 | # | Module | The identity it teaches | Interactive element | Industry anchor |
 |---|--------|------------------------|---------------------|-----------------|
 | 1 | **Payoff Algebra** | payoffs form a vector space over $\{(S{-}K)^+,(K{-}S)^+,S,1\}$; payout ≠ P&L | preset structures (spreads, straddle, condor, risk reversal, tight-spread digital), vol slider, P&L toggle | how dealers quote digitals: $-\partial C/\partial K = Z\,\mathbb{Q}(S_T>K)$ |
 | 2 | **Smile ↔ Density** | Breeden–Litzenberger: $q = \partial^2C/\partial K^2/Z$ | the five SVI sliders drive smile and density simultaneously; negative-density regions light up red | Gatheral's SVI; butterfly-arbitrage surface checks; Lee's moment bound on wings |
 | 3 | **Spanning & the VIX** | Carr–Madan: $g(S_T)=g(\kappa)+g'(\kappa)(S_T{-}\kappa)+\int g''(K)\,\mathrm{opt}(K)\,dK$ | choose target payoff, coarsen the strike grid, watch replication error; strip weights plotted against $\Delta K/K^2$ | the Cboe VIX **is** this formula applied to the log contract; variance swaps |
-| 4 | **The Inverse Problem** | $g^*=\frac{W}{Z}\frac{p}{q}$, growth $=\mathrm{KL}(p\|q)$ | Kelly-fraction and horizon dials; disagreement plot; replication and (educational) ticket | Kelly/fractional-Kelly sizing; $\mathbb{P}$-vs-$\mathbb{Q}$ premia; density-ratio trades |
+| 4 | **The Inverse Problem** | $g^*=\frac{W}{Z}\frac{p}{q}$, growth $=\mathrm{KL}(p\|q)$ | Kelly-fraction and horizon dials; densities→ratio→payoff→tradable stepper; 20k-path outcome simulator | Kelly/fractional-Kelly sizing; $\mathbb{P}$-vs-$\mathbb{Q}$ premia; density-ratio trades |
+| 5 | **Greeks** | $\Delta,\Gamma,\Theta$ as derivatives of $C(S)$; $\Theta + rS\Delta + \tfrac12\sigma^2S^2\Gamma = rC$ | tangent-line stepper (slope → curvature → rent); $\Gamma(S,t)$ pin-risk heatmap; per-day $\Theta$ vs convexity carry narration | homogeneity ties $\Gamma$ to the module-2 density ($S^2C_{SS}=K^2C_{KK}$); dealer gamma maps & pinning; daily hedged breakeven $\sigma S\sqrt{1/252}$ |
 
 ## Module roadmap (each = one page, same recipe: identity → controls → anchor)
 
 | Priority | Module | Teaches | Notes |
 |---|--------|---------|-------|
-| next | **Greeks as sensitivities** | Δ, Γ, ν, Θ as partial derivatives of the BS surface; Γ ↔ the butterfly/density link from module 2 | heatmaps over (S, t); "why Θ pays for Γ" |
 | next | **The vol surface in 3D** | term structure + skew as one object; calendar no-arb ($w$ increasing in $T$) | extend SVI to a slice family; calendar-arb diagnostic like module 2's butterfly check |
 | soon | **Measure change, visually** | Girsanov as a tilt: $\frac{d\mathbb{Q}}{d\mathbb{P}} \propto e^{-\lambda W_T}$; risk premium = drift wedge between the module-4 densities | animate the reweighting of paths |
 | soon | **Monte Carlo vs closed form** | GBM paths → payoff averaging converging to BS; variance reduction (antithetic, control variate on the stock) | the standard first quant-dev exercise, done honestly |
