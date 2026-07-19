@@ -374,7 +374,7 @@ def module_payoff_algebra():
         f"clean \\$1 bet at $Z\\,N(d_2) = {Z:.4f} \\times {nd2:.4f} = "
         f"\\mathbf{{{Z * nd2:.4f}}}$, where $N$ is the standard normal CDF and "
         f"$N(d_2) = {nd2:.4f}$ is precisely the risk-neutral $P(S_T > 100) = "
-        f"{nd2:.1%}$. The spread agrees to \\${abs(dprem - Z * nd2):.4f} — it costs a "
+        f"{nd2:.1%}$. The spread agrees to within \\${abs(dprem - Z * nd2):.4f} — it costs a "
         f"touch *less*, because over the 10-cent ramp it pays a little less than the full "
         f"\\$1. The general identity behind this lives in the “How the pros use it” tab.")
 
@@ -1283,7 +1283,7 @@ def module_inverse():
     def draw_densities(ax):
         ax.plot(grid, q.pdf, color=INK, label="market's odds $q$")
         ax.plot(grid, p_view, color=BLUE, label=f"your odds $p_f$ (f={fraction:.2f})")
-        ax.axvline(chain.spot, color=MUT, lw=1, ls=":")
+        ax.axvline(chain.spot, color=MUT, lw=1, ls=":", label="today's price")
         diff = p_view - q.pdf
         if diff.max() > 1e-5:
             j = int(np.argmax(diff))
@@ -1407,7 +1407,8 @@ def module_inverse():
                        "today's price the bet is built from **puts** — the right to *sell* at "
                        "the strike — because those are the actively traded contracts down "
                        "there; puts and calls are interchangeable via put–call parity "
-                       "(module 1).")
+                       "(module 1). In the table, **mid** is each contract's market price — "
+                       "the midpoint between the best buy and sell quotes.")
             legs = ticket.legs.assign(side=np.where(ticket.legs["qty"] >= 0, "BUY", "SELL"))
             st.dataframe(legs[["type", "strike", "side", "qty", "mid", "cost"]].round(2),
                          hide_index=True)
