@@ -32,7 +32,7 @@ Implemented in `payout_lab/providers.py::MassiveProvider`.
 
 | Need | Endpoint | Notes |
 |---|---|---|
-| option chain snapshot | `GET /v3/snapshot/options/{underlying}` | filter `contract_type=call`, `expiration_date=`; paginate `next_url`; gives bid/ask/IV/greeks in one call |
+| option chain snapshot | `GET /v3/snapshot/options/{underlying}` | one pass per `contract_type` (call, put) with `expiration_date=`; paginate `next_url`; gives bid/ask/IV/greeks per contract |
 | expirations | `GET /v3/reference/options/contracts` | pick nearest to target DTE |
 | spot + daily history | `GET /v2/aggs/ticker/{t}/range/1/day/{from}/{to}` | adjusted closes for the bootstrap view |
 | (later) historical chains | flat files / options aggregates | needed for the thesis backtest, see below |
@@ -79,17 +79,58 @@ The thesis deserves measurement, not assumption. With Massive's historical optio
 5. Paper-trade the ticket generator over the same history for a P&L-based check
    (includes spread costs, which log scores ignore).
 
-## Roadmap
+## Feature plan
 
-1. **v0 (done here):** engine + synthetic provider + notebook + Streamlit skeleton.
-2. **v1 — live:** plug in the API key; add put-side stitching via put–call parity
-   (OTM puts for the left tail, OTM calls for the right — better quotes than deep-ITM
-   calls); scale ticket to exact budget; contract rounding (÷100) with a minimum-size
-   warning.
-3. **v2 — backtest module:** the thesis validator above; per-ticker edge dashboards.
-4. **v3 — portfolio:** multiple underlyings at once (joint Kelly with a correlation
-   assumption), expiry term structure, alerts when KL(p‖q) for a watched name crosses a
-   threshold ("the market moved away from your view — re-examine or re-arm").
+Four screens, built in this order. Each phase is shippable on its own; effort assumes the
+`payout_lab` engine keeps doing the math and the app stays a thin layer over it.
+
+### Screen 1 — Trade Builder (phases 1–2)
+
+The notebook as an interactive page: pick underlying/expiry, shape a view, get a ticket.
+
+| # | Feature | Notes | Status / effort |
+|---|---------|-------|--------|
+| 1.1 | Live chains + history via Massive | `MassiveProvider`, both sides of book | ✅ done (needs key) |
+| 1.2 | Put–call parity stitching | OTM puts quote the left side of `q`; ticket executes left wing in puts | ✅ done |
+| 1.3 | Kelly fraction + drift haircut dials | conviction is continuous | ✅ done |
+| 1.4 | Contract realism | round to 100-share contracts, scale ticket to exact budget, min-size warning, cap-leg surfaced explicitly | S |
+| 1.5 | Spread-aware pricing toggle | mid vs. cross-the-spread (the duality notebook's bid/ask butterfly analysis, generalized); shows edge net of execution | M |
+| 1.6 | View builder beyond bootstrap | mixtures: bootstrap ⊕ analyst-target lognormal ⊕ event scenario (bimodal for single names); saved named views | M |
+| 1.7 | Scenario save/load | a view + ticket + rationale, serialized to JSON; the unit the backtester replays | S |
+
+### Screen 2 — Sector Scanner (phase 2)
+
+Where "the market undervalues semis" becomes a ranked list instead of an assumption.
+
+| # | Feature | Notes | Effort |
+|---|---------|-------|--------|
+| 2.1 | Basket table: SOXX, SMH, XSX?, NVDA, AMD, TSM, AVGO, MU, ASML | per name: KL(p‖q), annualized edge, liquidity score (spread/OI), earnings-inside-expiry flag | M |
+| 2.2 | Vehicle chooser | same thesis priced on SOXX vs SMH vs top single names; recommends by edge × liquidity (SMH usually wins on liquidity) | S after 2.1 |
+| 2.3 | Expiry term structure | KL by expiry — is the disagreement in the front month or the back? | M |
+
+### Screen 3 — Thesis Backtest (phase 3, the credibility screen)
+
+The § above ("Validating…") as a page: reconstruct `q_t` monthly from historical chains
+(this is the feature that requires the paid Massive options-history tier), score
+`log p_t(S_T) − log q_t(S_T)` out-of-sample, plot the cumulative edge per ticker with
+regime shading (pre/post 2023), and paper-trade the ticket generator with spread costs.
+Effort: L — but it's the difference between a toy and an instrument.
+
+### Screen 4 — Positions & Monitoring (phase 4)
+
+| # | Feature | Notes | Effort |
+|---|---------|-------|--------|
+| 4.1 | Saved positions, mark-to-market | reprice ticket legs off live quotes | M |
+| 4.2 | View drift alerts | recompute KL(p‖q) daily; alert when the market moves toward (edge gone — take profit?) or away from (re-examine or add) your view | M |
+| 4.3 | Roll assistant | at expiry−N days, re-run the builder on the next expiry and diff the tickets | M |
+| 4.4 | Export | ticket → CSV / broker multi-leg format | S |
+
+### Deliberately out of scope (for now)
+
+- Auto-execution / broker API — this is a research instrument; keep a human on the ticket.
+- Multi-underlying joint Kelly (correlated payoffs) — real math project, revisit after
+  the backtest proves single-name edges exist.
+- Intraday/websocket streaming — daily-close granularity matches the horizon of the thesis.
 
 ## Honest limitations
 

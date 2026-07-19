@@ -36,11 +36,16 @@ class ChainSnapshot:
     T: float                 # year fraction to expiry
     r: float                 # risk-free rate used for discounting
     calls: pd.DataFrame      # columns: strike, bid, ask, mid, iv
+    puts: pd.DataFrame | None = None   # same columns; enables parity stitching
 
     @property
     def Z(self) -> float:
         """Zero-coupon bond price Z(t, T) = e^{-rT}."""
         return float(np.exp(-self.r * self.T))
+
+    @property
+    def forward(self) -> float:
+        return float(self.spot * np.exp(self.r * self.T))
 
 
 def get_provider(prefer_live: bool = True, **kwargs):
@@ -84,15 +89,9 @@ class MassiveProvider:
                 out.append(d)
         return out
 
-    def chain(self, ticker: str, expiry: dt.date | None = None,
-              dte_target: int = 45) -> ChainSnapshot:
-        if expiry is None:
-            today = dt.date.today()
-            exps = [e for e in self.expirations(ticker) if e > today]
-            expiry = min(exps, key=lambda e: abs((e - today).days - dte_target))
-
+    def _side(self, ticker: str, expiry: dt.date, contract_type: str):
         rows, url, params = [], f"/v3/snapshot/options/{ticker}", dict(
-            expiration_date=expiry.isoformat(), contract_type="call", limit=250)
+            expiration_date=expiry.isoformat(), contract_type=contract_type, limit=250)
         spot = None
         while url:
             data = self._get(url, **params)
@@ -107,14 +106,25 @@ class MassiveProvider:
                     "iv": res.get("implied_volatility"),
                 })
             url = data.get("next_url")
+        df = pd.DataFrame(rows).dropna(subset=["strike"]).sort_values("strike")
+        df = df[(df["bid"] > 0) & (df["ask"] > 0)].reset_index(drop=True)
+        df["mid"] = (df["bid"] + df["ask"]) / 2
+        return df, spot
 
-        calls = pd.DataFrame(rows).dropna(subset=["strike"]).sort_values("strike")
-        calls = calls[(calls["bid"] > 0) & (calls["ask"] > 0)].reset_index(drop=True)
-        calls["mid"] = (calls["bid"] + calls["ask"]) / 2
+    def chain(self, ticker: str, expiry: dt.date | None = None,
+              dte_target: int = 45) -> ChainSnapshot:
+        if expiry is None:
+            today = dt.date.today()
+            exps = [e for e in self.expirations(ticker) if e > today]
+            expiry = min(exps, key=lambda e: abs((e - today).days - dte_target))
+
+        calls, spot = self._side(ticker, expiry, "call")
+        puts, spot2 = self._side(ticker, expiry, "put")
+        spot = spot or spot2
         if spot is None:
             spot = float(self._get(f"/v2/aggs/ticker/{ticker}/prev")["results"][0]["c"])
         T = max((expiry - dt.date.today()).days, 1) / 365.0
-        return ChainSnapshot(ticker, float(spot), expiry, T, self.r, calls)
+        return ChainSnapshot(ticker, float(spot), expiry, T, self.r, calls, puts)
 
     def history(self, ticker: str, years: int = 8) -> pd.Series:
         end = dt.date.today()
@@ -139,8 +149,8 @@ class SyntheticProvider:
     high drift, echoing the sector's realized behavior. Purely illustrative.
     """
 
-    def __init__(self, spot: float = 170.0, atm_vol: float = 0.45, r: float = 0.04,
-                 drift: float = 0.35, hist_vol: float = 0.50, seed: int = 7):
+    def __init__(self, spot: float = 245.0, atm_vol: float = 0.33, r: float = 0.04,
+                 drift: float = 0.22, hist_vol: float = 0.38, seed: int = 7):
         self.spot, self.atm_vol, self.r = spot, atm_vol, r
         self.drift, self.hist_vol, self.seed = drift, hist_vol, seed
 
@@ -150,7 +160,7 @@ class SyntheticProvider:
         w = a + b * (rho * (k - m) + np.sqrt((k - m) ** 2 + sig**2))
         return np.sqrt(np.maximum(w, 1e-8) / T)
 
-    def chain(self, ticker: str = "NVDA", expiry: dt.date | None = None,
+    def chain(self, ticker: str = "SOXX", expiry: dt.date | None = None,
               dte_target: int = 45) -> ChainSnapshot:
         from .implied import bs_call_price
         rng = np.random.default_rng(self.seed)
@@ -164,20 +174,27 @@ class SyntheticProvider:
         strikes = np.arange(lo, hi + step, step)
 
         iv = self._svi_vol(np.log(strikes / F), T)
-        mid = bs_call_price(self.spot, strikes, T, self.r, iv)
-        # spread widens away from the money, floored at a nickel
-        spread = np.maximum(0.05, mid * (0.006 + 0.10 * np.abs(np.log(strikes / F))))
-        noise = rng.normal(0, spread / 10)                # quote jitter
-        calls = pd.DataFrame({
-            "strike": strikes,
-            "bid": np.maximum(mid - spread / 2 + noise, 0.01),
-            "ask": mid + spread / 2 + noise,
-            "iv": iv,
-        })
-        calls["mid"] = (calls["bid"] + calls["ask"]) / 2
-        return ChainSnapshot(ticker, self.spot, expiry, T, self.r, calls)
+        call_mid = bs_call_price(self.spot, strikes, T, self.r, iv)
+        put_mid = call_mid - self.spot + strikes * np.exp(-self.r * T)  # parity
 
-    def history(self, ticker: str = "NVDA", years: int = 8) -> pd.Series:
+        def quote(mid):
+            # spread widens away from the money, floored at a nickel; OTM side
+            # of each instrument (small mids) keeps the tighter quotes
+            spread = np.maximum(0.05, mid * (0.006 + 0.10 * np.abs(np.log(strikes / F))))
+            noise = rng.normal(0, spread / 10)            # quote jitter
+            df = pd.DataFrame({
+                "strike": strikes,
+                "bid": np.maximum(mid - spread / 2 + noise, 0.01),
+                "ask": mid + spread / 2 + noise,
+                "iv": iv,
+            })
+            df["mid"] = (df["bid"] + df["ask"]) / 2
+            return df
+
+        return ChainSnapshot(ticker, self.spot, expiry, T, self.r,
+                             quote(call_mid), quote(np.maximum(put_mid, 0.0)))
+
+    def history(self, ticker: str = "SOXX", years: int = 8) -> pd.Series:
         rng = np.random.default_rng(self.seed + 1)
         n = int(years * 252)
         daily_mu = self.drift / 252

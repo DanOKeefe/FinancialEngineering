@@ -65,9 +65,10 @@ with right:
     st.line_chart(df, x_label="S_T", y_label="terminal wealth ($)")
 
 st.subheader("Order ticket")
-st.caption(f"Plus ${ticket.bonds:,.0f} face value of zero-coupon bonds (or cash ≈ same at this horizon).")
+st.caption(f"Plus {ticket.stock:,.1f} shares and ${ticket.bonds:,.0f} bond face value "
+           f"(negative = borrow); OTM puts replace deep-ITM calls via parity.")
 legs = ticket.legs.assign(side=np.where(ticket.legs["qty"] >= 0, "BUY", "SELL"))
-st.dataframe(legs[["strike", "side", "qty", "mid", "cost"]].round(2),
+st.dataframe(legs[["type", "strike", "side", "qty", "mid", "cost"]].round(2),
              use_container_width=True, hide_index=True)
 
 st.caption("Research prototype — mid-price fills, no fees/margin modeled. Not investment advice.")

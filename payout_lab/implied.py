@@ -53,27 +53,46 @@ class ImpliedDistribution:
         return float(np.interp(b, self.grid, self.cdf) - np.interp(a, self.grid, self.cdf))
 
 
+def stitched_quotes(chain: ChainSnapshot) -> pd.DataFrame:
+    """OTM-stitched call-equivalent quotes: puts below the forward, calls above.
+
+    Deep-ITM calls trade wide and stale; the liquidity below the forward
+    lives in OTM puts. Put-call parity (C = P + S - K·Z, no dividends)
+    converts put mids into synthetic call mids, so the whole strike axis is
+    quoted off the tighter side of the book. Falls back to calls-only when
+    the snapshot has no put side.
+    """
+    calls = chain.calls.assign(source="call", mid_call=chain.calls["mid"])
+    if chain.puts is None or chain.puts.empty:
+        return calls
+    F = chain.forward
+    puts = chain.puts.assign(source="put")
+    puts["mid_call"] = puts["mid"] + chain.spot - puts["strike"] * chain.Z
+    out = pd.concat([puts[puts["strike"] <= F], calls[calls["strike"] > F]])
+    return out[out["mid_call"] > 0].sort_values("strike").reset_index(drop=True)
+
+
 def implied_distribution(chain: ChainSnapshot, n_grid: int = 601,
                          smooth: float | None = None) -> ImpliedDistribution:
-    calls = chain.calls.copy()
+    quotes = stitched_quotes(chain)
     S0, T, r, Z = chain.spot, chain.T, chain.r, chain.Z
     F = S0 * np.exp(r * T)
 
-    if "iv" not in calls or calls["iv"].isna().all():
-        calls["iv"] = [implied_vol(p, S0, k, T, r)
-                       for p, k in zip(calls["mid"], calls["strike"])]
-    calls = calls.dropna(subset=["iv"])
-    calls = calls[(calls["iv"] > 0.01) & (calls["iv"] < 4.0)]
+    if "iv" not in quotes or quotes["iv"].isna().all():
+        quotes["iv"] = [implied_vol(p, S0, k, T, r)
+                        for p, k in zip(quotes["mid_call"], quotes["strike"])]
+    quotes = quotes.dropna(subset=["iv"])
+    quotes = quotes[(quotes["iv"] > 0.01) & (quotes["iv"] < 4.0)]
 
-    k = np.log(calls["strike"].to_numpy() / F)
-    iv = calls["iv"].to_numpy()
-    w = 1.0 / np.maximum((calls["ask"] - calls["bid"]).to_numpy(), 0.01)
+    k = np.log(quotes["strike"].to_numpy() / F)
+    iv = quotes["iv"].to_numpy()
+    w = 1.0 / np.maximum((quotes["ask"] - quotes["bid"]).to_numpy(), 0.01)
 
     if smooth is None:
         smooth = len(k) * np.var(iv) * 0.05          # light default smoothing
     spline = UnivariateSpline(k, iv, w=w / w.mean(), s=smooth, k=3)
 
-    Ks = np.linspace(calls["strike"].min(), calls["strike"].max(), n_grid)
+    Ks = np.linspace(quotes["strike"].min(), quotes["strike"].max(), n_grid)
     C = bs_call_price(S0, Ks, T, r, spline(np.log(Ks / F)))
 
     dK = Ks[1] - Ks[0]

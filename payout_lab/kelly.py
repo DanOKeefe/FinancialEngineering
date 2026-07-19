@@ -52,24 +52,36 @@ def expected_log_growth(grid: np.ndarray, p: np.ndarray, g: np.ndarray,
 
 @dataclass
 class Ticket:
-    """A tradable replication: bonds + a strip of calls at listed strikes."""
+    """A tradable replication: bonds + stock + option legs at listed strikes.
+
+    With ``use_puts`` the strikes below spot are held as OTM puts instead of
+    deep-ITM calls, via parity (S-K)^+ = (K-S)^+ + S - K: same payoff, but
+    quoted off the liquid side of the book. The parity conversion moves
+    K worth of face value into (possibly negative = borrowed) bonds and one
+    share per contract into the stock line.
+    """
     bonds: float                       # face value of zero-coupon bonds held
-    legs: pd.DataFrame                 # strike, qty (+buy/-sell), mid, cost
-    cost: float                        # total cost incl. bonds at Z
+    stock: float                       # shares of the underlying held
+    legs: pd.DataFrame                 # type (C/P), strike, qty, mid, cost
+    cost: float                        # total cost: bonds at Z + stock + legs
     payoff_strikes: np.ndarray = field(repr=False)
     payoff_values: np.ndarray = field(repr=False)
 
     def payoff(self, S: np.ndarray) -> np.ndarray:
         """Exact payoff of the replicating portfolio at expiry."""
-        out = np.full_like(np.asarray(S, float), self.bonds)
+        S = np.asarray(S, float)
+        out = self.bonds + self.stock * S
         for _, leg in self.legs.iterrows():
-            out += leg["qty"] * np.maximum(S - leg["strike"], 0)
+            if leg["type"] == "C":
+                out = out + leg["qty"] * np.maximum(S - leg["strike"], 0)
+            else:
+                out = out + leg["qty"] * np.maximum(leg["strike"] - S, 0)
         return out
 
 
 def replicate(grid: np.ndarray, g: np.ndarray, chain: ChainSnapshot,
               max_legs: int | None = None, min_mid: float = 0.10,
-              smooth_sigma: float | None = None) -> Ticket:
+              smooth_sigma: float | None = None, use_puts: bool = True) -> Ticket:
     """Replicate g on the chain's listed strikes with bonds + calls.
 
     The piecewise-linear interpolant of g at strikes K_0..K_n, held flat
@@ -104,13 +116,22 @@ def replicate(grid: np.ndarray, g: np.ndarray, chain: ChainSnapshot,
     qty = np.diff(slopes)                        # call quantity at each strike
 
     mids = chain.calls.set_index("strike")["mid"].reindex(strikes).to_numpy()
-    legs = pd.DataFrame({"strike": strikes, "qty": qty, "mid": mids})
-    legs["cost"] = legs["qty"] * legs["mid"]
+    legs = pd.DataFrame({"type": "C", "strike": strikes, "qty": qty, "mid": mids})
     legs = legs[np.abs(legs["qty"]) > 1e-6].reset_index(drop=True)
 
-    bonds = float(gk[0])
-    cost = bonds * chain.Z + float(legs["cost"].sum())
-    return Ticket(bonds=bonds, legs=legs, cost=cost,
+    bonds, stock = float(gk[0]), 0.0
+    if use_puts and chain.puts is not None and not chain.puts.empty:
+        put_mid = chain.puts.set_index("strike")["mid"]
+        swap = (legs["strike"] < chain.forward) & legs["strike"].isin(put_mid.index)
+        # (S-K)^+  =  (K-S)^+ + S - K   at expiry
+        stock = float(legs.loc[swap, "qty"].sum())
+        bonds -= float((legs.loc[swap, "qty"] * legs.loc[swap, "strike"]).sum())
+        legs.loc[swap, "type"] = "P"
+        legs.loc[swap, "mid"] = put_mid.reindex(legs.loc[swap, "strike"]).to_numpy()
+
+    legs["cost"] = legs["qty"] * legs["mid"]
+    cost = bonds * chain.Z + stock * chain.spot + float(legs["cost"].sum())
+    return Ticket(bonds=bonds, stock=stock, legs=legs, cost=cost,
                   payoff_strikes=strikes, payoff_values=gk)
 
 
