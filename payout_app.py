@@ -42,10 +42,12 @@ except (TypeError, ValueError):
 with st.sidebar:
     st.title("📐 Payout Lab")
     module = st.radio("Module", MODULES, index=min(_default, len(MODULES) - 1))
-    st.caption("A financial-engineering laboratory: every page pairs the derivation "
-               "with a live visualization. Notation follows industry convention — "
-               "forward moneyness, total implied variance, risk-neutral measure "
-               "$\\mathbb{Q}$ throughout.")
+    st.caption("**The big idea:** option prices encode the market's probability "
+               "distribution for a stock's price at a future date — and you can read "
+               "that distribution straight out of them. Options are the measurement "
+               "instrument; the distribution is the prize.")
+    st.caption("Every finance term is introduced the first time you need it. "
+               "New to options? Start with Module 1 and build up.")
 
 
 def fig_axes(n=1, height=3.4):
