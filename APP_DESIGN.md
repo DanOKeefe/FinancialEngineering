@@ -1,144 +1,66 @@
-# Payout Lab — app design
+# Payout Lab — design
 
-A small application that turns a probability view on an underlying (e.g. "the market
-persistently underprices semiconductor upside") into a priced, tradable option order
-ticket, fed by live data from **Massive** (formerly Polygon.io).
+An interactive **financial-engineering laboratory**: the app teaches the math by letting
+you touch it. Every module pairs a derivation (stated in the notation quants actually
+use) with a live visualization whose controls map one-to-one onto the symbols in the
+formula. Trading-tool features (tickets, budgets) appear only where they *illustrate* the
+theory — the deliverable is understanding, benchmarked against quant industry standards.
 
-The math and a working end-to-end run live in
-`Inverse Problem - Log-Optimal Semiconductor Payouts.ipynb`; the reusable engine is the
-`payout_lab/` package; `payout_app.py` is the UI. This document is the plan around them.
+The engine is `payout_lab/`; the UI is `payout_app.py` (Streamlit,
+`streamlit run payout_app.py`); the long-form treatments live in the two notebooks
+(*Option Price and Probability Duality*, *Inverse Problem — Log-Optimal Semiconductor
+Payouts*). Modules deep-link via `?m=0..3`.
 
-## The core loop
+## Design principles
 
-```
-Massive REST ──► ChainSnapshot ──► implied density q(S_T)     (Breeden–Litzenberger,
-      │                                                        vol-space smoothing)
-      └────────► daily history ──► subjective density p(S_T)  (block bootstrap,
-                                                               drift haircut, Kelly fraction f)
-                       g*(S) = (W/Z) · (p/q)^f  ──►  replicate on listed strikes
-                                                 ──►  order ticket + edge metrics
-```
+1. **Math first, sliders second.** Each page opens with the identity it teaches, in
+   LaTeX, then gives you its parameters as controls. Moving a slider is moving a symbol.
+2. **Industry conventions throughout.** Log-forward-moneyness $k=\ln(K/F)$, total
+   implied variance $w=\sigma^2T$, SVI parameters, $\mathbb{P}$ vs $\mathbb{Q}$ measure
+   language, discount factor $Z(t,T)$ — the vocabulary of a vol desk, not of a textbook
+   simplification.
+3. **Break things on purpose.** The fastest way to understand a no-arbitrage condition
+   is to violate it and watch the diagnostic fire (negative density = butterfly
+   arbitrage; Lee wing bound; mass ≠ 1).
+4. **Real-world anchors.** Each abstract result lands on something in production use:
+   digitals priced as spread limits, surface arb checks, the Cboe VIX formula, variance
+   swaps, Kelly sizing.
+5. **Runs with zero setup.** A synthetic provider (SVI chain + fat-tailed history) makes
+   every module fully interactive offline; `MASSIVE_API_KEY` swaps in live Massive
+   (ex-Polygon.io) data with no code change.
 
-Key identities the app is built on (derived in the two notebooks):
+## The four modules (implemented)
 
-- price = discounted risk-neutral expectation (FTAP), so butterflies reveal `q`
-- log-optimal payoff under budget: `g* = (W/Z)·p/q`
-- expected log growth of `g*` = `KL(p‖q) − log Z` — **the edge is the KL divergence**
-- any European payoff = bonds + stock + strip of calls (spanning), so `g*` is executable
+| # | Module | The identity it teaches | Interactive element | Industry anchor |
+|---|--------|------------------------|---------------------|-----------------|
+| 1 | **Payoff Algebra** | payoffs form a vector space over $\{(S{-}K)^+,(K{-}S)^+,S,1\}$; payout ≠ P&L | preset structures (spreads, straddle, condor, risk reversal, tight-spread digital), vol slider, P&L toggle | how dealers quote digitals: $-\partial C/\partial K = Z\,\mathbb{Q}(S_T>K)$ |
+| 2 | **Smile ↔ Density** | Breeden–Litzenberger: $q = \partial^2C/\partial K^2/Z$ | the five SVI sliders drive smile and density simultaneously; negative-density regions light up red | Gatheral's SVI; butterfly-arbitrage surface checks; Lee's moment bound on wings |
+| 3 | **Spanning & the VIX** | Carr–Madan: $g(S_T)=g(\kappa)+g'(\kappa)(S_T{-}\kappa)+\int g''(K)\,\mathrm{opt}(K)\,dK$ | choose target payoff, coarsen the strike grid, watch replication error; strip weights plotted against $\Delta K/K^2$ | the Cboe VIX **is** this formula applied to the log contract; variance swaps |
+| 4 | **The Inverse Problem** | $g^*=\frac{W}{Z}\frac{p}{q}$, growth $=\mathrm{KL}(p\|q)$ | Kelly-fraction and horizon dials; disagreement plot; replication and (educational) ticket | Kelly/fractional-Kelly sizing; $\mathbb{P}$-vs-$\mathbb{Q}$ premia; density-ratio trades |
 
-## Data layer (Massive / ex-Polygon.io)
+## Module roadmap (each = one page, same recipe: identity → controls → anchor)
 
-Implemented in `payout_lab/providers.py::MassiveProvider`.
+| Priority | Module | Teaches | Notes |
+|---|--------|---------|-------|
+| next | **Greeks as sensitivities** | Δ, Γ, ν, Θ as partial derivatives of the BS surface; Γ ↔ the butterfly/density link from module 2 | heatmaps over (S, t); "why Θ pays for Γ" |
+| next | **The vol surface in 3D** | term structure + skew as one object; calendar no-arb ($w$ increasing in $T$) | extend SVI to a slice family; calendar-arb diagnostic like module 2's butterfly check |
+| soon | **Measure change, visually** | Girsanov as a tilt: $\frac{d\mathbb{Q}}{d\mathbb{P}} \propto e^{-\lambda W_T}$; risk premium = drift wedge between the module-4 densities | animate the reweighting of paths |
+| soon | **Monte Carlo vs closed form** | GBM paths → payoff averaging converging to BS; variance reduction (antithetic, control variate on the stock) | the standard first quant-dev exercise, done honestly |
+| later | **American exercise** | binomial lattice; early-exercise boundary; why the module-4 ETF caveat exists | ties to SOXX/SMH options being American |
+| later | **Realized vs implied** | variance-swap P&L decomposition $\sum \Gamma S^2(\sigma_{real}^2-\sigma_{imp}^2)dt$ | the cleanest "density disagreement" trade; needs historical data (Massive) |
+| later | **Backtesting the thesis** | out-of-sample log scores $\log p_t(S_T) - \log q_t(S_T)$ per ticker | the empirical companion to module 4; needs Massive historical chains |
 
-| Need | Endpoint | Notes |
-|---|---|---|
-| option chain snapshot | `GET /v3/snapshot/options/{underlying}` | one pass per `contract_type` (call, put) with `expiration_date=`; paginate `next_url`; gives bid/ask/IV/greeks per contract |
-| expirations | `GET /v3/reference/options/contracts` | pick nearest to target DTE |
-| spot + daily history | `GET /v2/aggs/ticker/{t}/range/1/day/{from}/{to}` | adjusted closes for the bootstrap view |
-| (later) historical chains | flat files / options aggregates | needed for the thesis backtest, see below |
+## Data layer
 
-Config: `MASSIVE_API_KEY` (legacy `POLYGON_API_KEY` also honored), optional
-`MASSIVE_BASE_URL`. Auth via `apiKey` query param.
-
-Practical handling already in the code, worth keeping in any rewrite:
-
-- drop quotes with `bid == 0` or mid < $0.10 (junk quotes make junk legs)
-- smooth IVs (spread-weighted spline in log-moneyness) **before** differencing — second
-  differences of raw mids produce negative densities
-- clip/report negative density mass; renormalize; surface `raw mass ≈ 1` as a health check
-- cache chain snapshots ~5 min (`st.cache_data(ttl=300)`); history ~1 day
-
-## UI (Streamlit, `payout_app.py`)
-
-Inputs: ticker, target DTE, budget, **Kelly fraction** (conviction dial), **drift haircut**
-(how much of the historical drift you refuse to extrapolate), years of history.
-Outputs: density comparison, ideal-vs-replicated payoff, order ticket table, and four
-headline metrics (spot, annualized edge-if-right, P(lose) under the view, cost).
-
-Deliberate design choices:
-
-- **Conviction is continuous, not boolean.** `f` and the drift haircut both shrink the
-  trade toward "hold bonds"; full Kelly is the aggressive end, not the default.
-- **Show P(lose money) prominently.** Density-ratio payoffs lose often and win big;
-  hiding that would misrepresent the strategy.
-- **Report ideal vs replicated growth.** The gap (ratio cap, finite strikes, smoothing)
-  is the implementation-efficiency metric to watch.
-
-## Validating "the market undervalued semis" (before betting on it)
-
-The thesis deserves measurement, not assumption. With Massive's historical options data:
-
-1. For each month-end since ~2016 and each name in the basket (NVDA, AMD, TSM, AVGO,
-   MU, ASML, SOXX/SMH), reconstruct `q_t` from that day's chain at ~45 DTE.
-2. Build `p_t` from data available *at that time* (rolling bootstrap — no lookahead).
-3. When the option expires, record realized `S_T`; score both densities:
-   `edge_t = log p_t(S_T) − log q_t(S_T)`.
-4. The running mean of `edge_t` is the realized, out-of-sample KL edge — exactly the
-   quantity the Kelly payoff monetizes. Positive and stable ⇒ thesis holds; also shows
-   *where* it comes from (right tail vs body) and whether it decayed after 2023.
-5. Paper-trade the ticket generator over the same history for a P&L-based check
-   (includes spread costs, which log scores ignore).
-
-## Feature plan
-
-Four screens, built in this order. Each phase is shippable on its own; effort assumes the
-`payout_lab` engine keeps doing the math and the app stays a thin layer over it.
-
-### Screen 1 — Trade Builder (phases 1–2)
-
-The notebook as an interactive page: pick underlying/expiry, shape a view, get a ticket.
-
-| # | Feature | Notes | Status / effort |
-|---|---------|-------|--------|
-| 1.1 | Live chains + history via Massive | `MassiveProvider`, both sides of book | ✅ done (needs key) |
-| 1.2 | Put–call parity stitching | OTM puts quote the left side of `q`; ticket executes left wing in puts | ✅ done |
-| 1.3 | Kelly fraction + drift haircut dials | conviction is continuous | ✅ done |
-| 1.4 | Contract realism | round to 100-share contracts, scale ticket to exact budget, min-size warning, cap-leg surfaced explicitly | S |
-| 1.5 | Spread-aware pricing toggle | mid vs. cross-the-spread (the duality notebook's bid/ask butterfly analysis, generalized); shows edge net of execution | M |
-| 1.6 | View builder beyond bootstrap | mixtures: bootstrap ⊕ analyst-target lognormal ⊕ event scenario (bimodal for single names); saved named views | M |
-| 1.7 | Scenario save/load | a view + ticket + rationale, serialized to JSON; the unit the backtester replays | S |
-
-### Screen 2 — Sector Scanner (phase 2)
-
-Where "the market undervalues semis" becomes a ranked list instead of an assumption.
-
-| # | Feature | Notes | Effort |
-|---|---------|-------|--------|
-| 2.1 | Basket table: SOXX, SMH, XSX?, NVDA, AMD, TSM, AVGO, MU, ASML | per name: KL(p‖q), annualized edge, liquidity score (spread/OI), earnings-inside-expiry flag | M |
-| 2.2 | Vehicle chooser | same thesis priced on SOXX vs SMH vs top single names; recommends by edge × liquidity (SMH usually wins on liquidity) | S after 2.1 |
-| 2.3 | Expiry term structure | KL by expiry — is the disagreement in the front month or the back? | M |
-
-### Screen 3 — Thesis Backtest (phase 3, the credibility screen)
-
-The § above ("Validating…") as a page: reconstruct `q_t` monthly from historical chains
-(this is the feature that requires the paid Massive options-history tier), score
-`log p_t(S_T) − log q_t(S_T)` out-of-sample, plot the cumulative edge per ticker with
-regime shading (pre/post 2023), and paper-trade the ticket generator with spread costs.
-Effort: L — but it's the difference between a toy and an instrument.
-
-### Screen 4 — Positions & Monitoring (phase 4)
-
-| # | Feature | Notes | Effort |
-|---|---------|-------|--------|
-| 4.1 | Saved positions, mark-to-market | reprice ticket legs off live quotes | M |
-| 4.2 | View drift alerts | recompute KL(p‖q) daily; alert when the market moves toward (edge gone — take profit?) or away from (re-examine or add) your view | M |
-| 4.3 | Roll assistant | at expiry−N days, re-run the builder on the next expiry and diff the tickets | M |
-| 4.4 | Export | ticket → CSV / broker multi-leg format | S |
-
-### Deliberately out of scope (for now)
-
-- Auto-execution / broker API — this is a research instrument; keep a human on the ticket.
-- Multi-underlying joint Kelly (correlated payoffs) — real math project, revisit after
-  the backtest proves single-name edges exist.
-- Intraday/websocket streaming — daily-close granularity matches the horizon of the thesis.
+Unchanged from the engine: `MassiveProvider` (chain snapshots both sides of the book,
+daily aggregates; `MASSIVE_API_KEY`) with `SyntheticProvider` fallback. Only module 4 and
+the two "later" empirical modules touch data at all — the theory modules are self-
+contained mathematics, deliberately, so the app is useful with no key and no network.
 
 ## Honest limitations
 
-- The bootstrap view assumes the future resembles the sampled past; the drift haircut is
-  the guardrail, not a solution. The backtest (v2) is the real answer.
-- American-style single-name options carry early-exercise premium the European math
-  ignores (small for OTM/short-dated; SPX/XSP or European-style index options avoid it).
-- Mid-price fills are optimistic; the butterfly-spread cost analysis in the duality
-  notebook is the template for a real slippage model.
-- Nothing here is investment advice; it is a research instrument for making a
-  disagreement with the market precise, priced, and falsifiable.
+- European-exercise math on American-style listed options (flagged in module 4; an
+  American-exercise module is on the roadmap precisely to teach the gap).
+- Synthetic data is calibrated to be plausible, not to match any date's market.
+- The educational ticket uses mid fills and ignores fees/margin — by design, with the
+  caveat printed next to it. Nothing here is investment advice.
